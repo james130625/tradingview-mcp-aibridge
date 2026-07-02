@@ -103,7 +103,27 @@ export async function list() {
   return { success: true, alert_count: result?.alerts?.length || 0, source: 'internal_api', alerts: result?.alerts || [], error: result?.error };
 }
 
-export async function deleteAlerts({ delete_all }) {
+export async function deleteAlerts({ delete_all, alert_id }) {
+  if (alert_id) {
+    const result = await evaluateAsync(`
+      fetch('https://pricealerts.tradingview.com/delete_alert', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'alert_id=${alert_id}'
+      }).then(function(r) { return r.json(); })
+        .catch(function() {
+          return fetch('https://pricealerts.tradingview.com/remove_alert', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'alert_id=${alert_id}'
+          }).then(function(r) { return r.json(); });
+        })
+    `);
+    return { success: true, alert_id, api_response: result, source: 'rest_api' };
+  }
+
   if (delete_all) {
     const result = await evaluate(`
       (function() {
@@ -119,5 +139,5 @@ export async function deleteAlerts({ delete_all }) {
     `);
     return { success: true, note: 'Alert deletion requires manual confirmation in the context menu.', context_menu_opened: result?.context_menu_opened || false, source: 'dom_fallback' };
   }
-  throw new Error('Individual alert deletion not yet supported. Use delete_all: true.');
+  throw new Error('Provide alert_id for individual deletion or delete_all: true.');
 }
