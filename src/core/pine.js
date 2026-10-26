@@ -35,6 +35,64 @@ const FIND_MONACO = `
   })()
 `;
 
+// ── Write guard (2026-10-27) ──
+// pine_open 은 열린 탭의 '내용만' 바꾸고 탭 이름은 그대로 둔다 → 저장하면 원래 탭 이름으로 덮어쓴다
+// (실제 사고: 다른 스크립트를 시험 코드로 덮어씀). TV_PINE_WRITE_ALLOW="test01,책 시험용" 처럼 주면
+// 편집기에 지금 열린 스크립트 이름이 목록에 있을 때만 코드 넣기·적용·저장·열기를 한다.
+const CURRENT_SCRIPT_NAME = `
+  (function() {
+    var ed = document.querySelector('.monaco-editor.pine-editor-monaco');
+    var root = ed;
+    for (var i = 0; i < 12 && root && root.parentElement; i++) {
+      root = root.parentElement;
+      var nb = root.querySelector('[class*="nameButton"]');
+      if (nb && nb.offsetParent !== null) return nb.textContent.trim();
+    }
+    return null;
+  })()
+`;
+
+function writeAllowList() {
+  const raw = process.env.TV_PINE_WRITE_ALLOW;
+  if (!raw) return null;
+  return raw.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+async function assertWritable(action) {
+  const allow = writeAllowList();
+  if (!allow) return null;
+  const name = await evaluate(CURRENT_SCRIPT_NAME);
+  if (!name || !allow.includes(name)) {
+    throw new Error(`${action} 거부: 편집기에 열린 스크립트 "${name ?? '알 수 없음'}" 는 TV_PINE_WRITE_ALLOW(${allow.join(', ')})에 없습니다. 허락된 스크립트 탭을 먼저 여세요.`);
+  }
+  return name;
+}
+
+// 차트 적용 버튼 — 글자·title·aria-label 을 한국어·영어로 본다. '저장' 버튼은 절대 누르지 않는다.
+const CLICK_APPLY_BUTTON = `
+  (function() {
+    var re = /^(add to chart|update on chart|차트에 추가|차트 업데이트|차트에 업데이트)$/i;
+    // 편집기 패널 안(스크립트 이름 버튼이 있는 조상)에서만 찾는다 — 화면 다른 곳의 같은 이름 버튼을 누르지 않게
+    var ed = document.querySelector('.monaco-editor.pine-editor-monaco');
+    var root = null;
+    for (var k = 0, el = ed; k < 12 && el && el.parentElement; k++) {
+      el = el.parentElement;
+      if (el.querySelector('[class*="nameButton"]')) { root = el; break; }
+    }
+    if (!root) return null;
+    var btns = root.querySelectorAll('button, [role="button"]');
+    for (var i = 0; i < btns.length; i++) {
+      var b = btns[i];
+      if (b.offsetParent === null) continue;
+      var labels = [b.textContent.trim(), b.getAttribute('title') || '', b.getAttribute('aria-label') || '', b.getAttribute('data-tooltip') || ''];
+      for (var j = 0; j < labels.length; j++) {
+        if (re.test(labels[j].trim())) { b.click(); return labels[j].trim(); }
+      }
+    }
+    return null;
+  })()
+`;
+
 /**
  * Opens the Pine Editor panel and waits for Monaco to become available.
  * Returns true if editor is accessible, false on timeout.
@@ -266,6 +324,7 @@ export async function getSource() {
 export async function setSource({ source }) {
   const editorReady = await ensurePineEditorOpen();
   if (!editorReady) throw new Error('Could not open Pine Editor.');
+  await assertWritable('pine_set_source');
 
   const escaped = JSON.stringify(source);
   const set = await evaluate(`
@@ -284,39 +343,14 @@ export async function setSource({ source }) {
 export async function compile() {
   const editorReady = await ensurePineEditorOpen();
   if (!editorReady) throw new Error('Could not open Pine Editor.');
+  const scriptName = await assertWritable('pine_compile');
 
-  const clicked = await evaluate(`
-    (function() {
-      var btns = document.querySelectorAll('button');
-      var fallback = null;
-      var saveBtn = null;
-      for (var i = 0; i < btns.length; i++) {
-        var text = btns[i].textContent.trim();
-        if (/save and add to chart/i.test(text)) {
-          btns[i].click();
-          return 'Save and add to chart';
-        }
-        if (!fallback && /^(Add to chart|Update on chart)/i.test(text)) {
-          fallback = btns[i];
-        }
-        if (!saveBtn && btns[i].className.indexOf('saveButton') !== -1 && btns[i].offsetParent !== null) {
-          saveBtn = btns[i];
-        }
-      }
-      if (fallback) { fallback.click(); return fallback.textContent.trim(); }
-      if (saveBtn) { saveBtn.click(); return 'Pine Save'; }
-      return null;
-    })()
-  `);
-
-  if (!clicked) {
-    const c = await getClient();
-    await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 2, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-    await c.Input.dispatchKeyEvent({ type: 'keyUp', key: 'Enter', code: 'Enter' });
-  }
+  // 10-27: 예전엔 적용 버튼을 못 찾으면 '저장' 버튼·Ctrl+Enter 로 넘어갔다 → 이제는 아무것도 누르지 않고 멈춘다
+  const clicked = await evaluate(CLICK_APPLY_BUTTON);
+  if (!clicked) throw new Error("'차트에 추가/차트 업데이트' 버튼을 못 찾았습니다. 저장은 누르지 않았습니다.");
 
   await new Promise(r => setTimeout(r, 2000));
-  return { success: true, button_clicked: clicked || 'keyboard_shortcut', source: 'dom_fallback' };
+  return { success: true, button_clicked: clicked, script_name: scriptName, source: 'dom' };
 }
 
 export async function getErrors() {
@@ -347,6 +381,7 @@ export async function getErrors() {
 export async function save() {
   const editorReady = await ensurePineEditorOpen();
   if (!editorReady) throw new Error('Could not open Pine Editor.');
+  await assertWritable('pine_save');
 
   const c = await getClient();
   await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 2, key: 's', code: 'KeyS', windowsVirtualKeyCode: 83 });
@@ -440,34 +475,10 @@ export async function smartCompile() {
     })()
   `);
 
-  const buttonClicked = await evaluate(`
-    (function() {
-      var btns = document.querySelectorAll('button');
-      var addBtn = null;
-      var updateBtn = null;
-      var saveBtn = null;
-      for (var i = 0; i < btns.length; i++) {
-        var text = btns[i].textContent.trim();
-        if (/save and add to chart/i.test(text)) {
-          btns[i].click();
-          return 'Save and add to chart';
-        }
-        if (!addBtn && /^add to chart$/i.test(text)) addBtn = btns[i];
-        if (!updateBtn && /^update on chart$/i.test(text)) updateBtn = btns[i];
-        if (!saveBtn && btns[i].className.indexOf('saveButton') !== -1 && btns[i].offsetParent !== null) saveBtn = btns[i];
-      }
-      if (addBtn) { addBtn.click(); return 'Add to chart'; }
-      if (updateBtn) { updateBtn.click(); return 'Update on chart'; }
-      if (saveBtn) { saveBtn.click(); return 'Pine Save'; }
-      return null;
-    })()
-  `);
-
-  if (!buttonClicked) {
-    const c = await getClient();
-    await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 2, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-    await c.Input.dispatchKeyEvent({ type: 'keyUp', key: 'Enter', code: 'Enter' });
-  }
+  const scriptName = await assertWritable('pine_smart_compile');
+  // 10-27: '저장' 버튼·Ctrl+Enter 대체 동작을 뺐다(다른 스크립트 덮어쓰기 원인)
+  const buttonClicked = await evaluate(CLICK_APPLY_BUTTON);
+  if (!buttonClicked) throw new Error("'차트에 추가/차트 업데이트' 버튼을 못 찾았습니다. 저장은 누르지 않았습니다.");
 
   await new Promise(r => setTimeout(r, 2500));
 
@@ -498,7 +509,8 @@ export async function smartCompile() {
 
   return {
     success: true,
-    button_clicked: buttonClicked || 'keyboard_shortcut',
+    button_clicked: buttonClicked,
+    script_name: scriptName,
     has_errors: errors?.length > 0,
     errors: errors || [],
     study_added: studyAdded,
@@ -508,6 +520,8 @@ export async function smartCompile() {
 export async function newScript({ type }) {
   const editorReady = await ensurePineEditorOpen();
   if (!editorReady) throw new Error('Could not open Pine Editor.');
+  // 10-09: 새 스크립트 대신 열린 스크립트를 덮어썼다 → 허락 목록이 있으면 아예 막는다(새 스크립트는 사람이 만든다)
+  if (writeAllowList()) throw new Error('pine_new 거부: TV_PINE_WRITE_ALLOW 가 켜져 있으면 새 스크립트는 사람이 직접 만듭니다.');
 
   const typeMap = { indicator: 'indicator', strategy: 'strategy', library: 'library' };
   const templates = {
@@ -537,6 +551,12 @@ export async function newScript({ type }) {
 export async function openScript({ name }) {
   const editorReady = await ensurePineEditorOpen();
   if (!editorReady) throw new Error('Could not open Pine Editor.');
+  // 10-27: 열기는 지금 탭의 내용만 바꾼다 → 지금 탭과 열 스크립트가 둘 다 허락 목록에 있어야 한다
+  const allow = writeAllowList();
+  if (allow) {
+    await assertWritable('pine_open');
+    if (!allow.includes(name)) throw new Error(`pine_open 거부: "${name}" 은 TV_PINE_WRITE_ALLOW(${allow.join(', ')})에 없습니다.`);
+  }
 
   const escapedName = JSON.stringify(name.toLowerCase());
 
