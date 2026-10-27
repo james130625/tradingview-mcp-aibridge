@@ -1,5 +1,16 @@
 # tradingview-mcp-aibridge
 
+> **이 저장소는 책 『클로드AI MCP로 트레이딩뷰 차트 분석부터 텔레그램 자동매매까지』 독자용 고친 판입니다.**
+> 원본: [aibridge-leo/tradingview-mcp-aibridge](https://github.com/aibridge-leo/tradingview-mcp-aibridge) ← [tradesdontlie/tradingview-mcp](https://github.com/tradesdontlie/tradingview-mcp) (MIT).
+> 원본에서 고친 것 3가지:
+> 1. `pine_smart_compile`·`pine_compile` 이 적용 버튼을 못 찾으면 **'저장'을 누르지 않고 멈춤** (다른 스크립트 덮어쓰기 사고 막기) · 한국어 화면의 '차트 업데이트/차트에 추가' 버튼 인식
+> 2. `TV_PINE_WRITE_ALLOW` — 허락한 스크립트 이름에서만 코드 넣기·저장 (예: `TV_PINE_WRITE_ALLOW=test01`)
+> 3. 차트 위에 그리는 전략(`overlay=true`)의 시험 결과·거래 목록·누적 손익을 못 읽던 문제 (`data_get_strategy_results`·`data_get_trades`·`data_get_equity`)
+> + 알림 하나만 ID로 지우기
+>
+> ⚠ 비공식 도구입니다. 트레이딩뷰 공식 MCP가 아니며, 사용은 본인 책임입니다(책 12장).
+
+
 **tradingview-mcp by AI BRIDGE** — TradingView Desktop을 Claude Code에 연결하는 MCP 서버. Chrome DevTools Protocol(CDP)을 통해 실행 중인 TradingView 차트를 Claude가 직접 읽고 제어합니다.
 
 ### 🇰🇷 한국 트레이더 특화 버전
@@ -17,7 +28,7 @@ Claude Code에 아래 프롬프트 한 번만 복사-붙여넣기:
 
 ```
 Set up tradingview-mcp-aibridge for me.
-Clone https://github.com/aibridge-leo/tradingview-mcp-aibridge.git into the current project directory.
+Clone https://github.com/james130625/tradingview-mcp-aibridge.git into the current project directory.
 Run npm install inside it.
 Create .mcp.json in the project root with:
   {

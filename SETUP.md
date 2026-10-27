@@ -42,7 +42,7 @@ Windows에서 TradingView가 MSIX(Microsoft Store) 설치인 경우 — 최근 �
 #### 2.1 Clone
 
 ```bash
-git clone https://github.com/aibridge-leo/tradingview-mcp-aibridge.git
+git clone https://github.com/james130625/tradingview-mcp-aibridge.git
 cd tradingview-mcp-aibridge
 npm install
 ```

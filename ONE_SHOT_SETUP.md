@@ -11,7 +11,7 @@ Claude Code에 아래 프롬프트를 **한 번만** 복사해서 붙여넣으�
 ```
 TradingView MCP by AI BRIDGE를 설치해줘.
 
-1. 현재 프로젝트 디렉토리 안에 https://github.com/aibridge-leo/tradingview-mcp-aibridge.git 를 clone 해줘 (폴더명: tradingview-mcp-aibridge).
+1. 현재 프로젝트 디렉토리 안에 https://github.com/james130625/tradingview-mcp-aibridge.git 를 clone 해줘 (폴더명: tradingview-mcp-aibridge).
 2. 그 디렉토리 안에서 npm install 실행.
 3. 프로젝트 루트(현재 cwd)에 .mcp.json 생성:
    {
