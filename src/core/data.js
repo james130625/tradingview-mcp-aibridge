@@ -132,19 +132,46 @@ export async function getIndicator({ entity_id }) {
   return { success: true, entity_id, visible: data?.visible, inputs };
 }
 
+// ── 전략 찾기 (10-27) ──
+// 옛 조건은 metaInfo().is_price_study === false 만 찾아서, overlay=true 전략(가격 차트 위에 그리는 전략)을 못 찾았다.
+// 트레이딩뷰는 전략에 isTVScriptStrategy=true 를 단다 → 그걸 먼저 보고, 없으면 옛 조건으로.
+const FIND_STRATEGY = `
+        var strat = null;
+        for (var i = 0; i < sources.length; i++) {
+          var mi = sources[i].metaInfo ? sources[i].metaInfo() : null;
+          if (mi && mi.isTVScriptStrategy === true) { strat = sources[i]; break; }
+        }
+        if (!strat) {
+          for (var j = 0; j < sources.length; j++) {
+            var s0 = sources[j];
+            if (s0.metaInfo && s0.metaInfo().is_price_study === false && (s0.reportData || s0.performance || s0.ordersData)) { strat = s0; break; }
+          }
+        }
+        var rd = null;
+        if (strat && strat.reportData) {
+          rd = typeof strat.reportData === 'function' ? strat.reportData() : strat.reportData;
+          if (rd && typeof rd.value === 'function') rd = rd.value();
+        }
+`;
+
 export async function getStrategyResults() {
   const results = await evaluate(`
     (function() {
       try {
         var chart = ${CHART_API}._chartWidget;
         var sources = chart.model().model().dataSources();
-        var strat = null;
-        for (var i = 0; i < sources.length; i++) {
-          var s = sources[i];
-          if (s.metaInfo && s.metaInfo().is_price_study === false && (s.reportData || s.performance)) { strat = s; break; }
-        }
+        ${FIND_STRATEGY}
         if (!strat) return {metrics: {}, source: 'internal_api', error: 'No strategy found on chart. Add a strategy indicator first.'};
         var metrics = {};
+        if (rd && rd.performance && rd.performance.all) {
+          // 지금 트레이딩뷰: reportData().performance.all 에 숫자들이 있다 — 거래 목록 같은 큰 배열은 빼고 숫자만
+          var all = rd.performance.all, ak = Object.keys(all);
+          for (var a = 0; a < ak.length; a++) { if (typeof all[ak[a]] === 'number') metrics[ak[a]] = all[ak[a]]; }
+          var pk = ['maxStrategyDrawDown', 'maxStrategyDrawDownPercent', 'maxStrategyRunUp', 'maxStrategyRunUpPercent', 'buyHoldReturn', 'buyHoldReturnPercent', 'sharpeRatio', 'sortinoRatio', 'openPL', 'openPLPercent'];
+          for (var b = 0; b < pk.length; b++) { var pv = rd.performance[pk[b]]; if (typeof pv === 'number') metrics[pk[b]] = pv; }
+          if (rd.currency) metrics.currency = rd.currency;
+          return {metrics: metrics, source: 'internal_api', note: '...Percent 값은 비율(0.8 = 80%)'};
+        }
         if (strat.reportData) {
           var rd = typeof strat.reportData === 'function' ? strat.reportData() : strat.reportData;
           if (rd && typeof rd === 'object') {
@@ -171,12 +198,20 @@ export async function getTrades({ max_trades } = {}) {
       try {
         var chart = ${CHART_API}._chartWidget;
         var sources = chart.model().model().dataSources();
-        var strat = null;
-        for (var i = 0; i < sources.length; i++) {
-          var s = sources[i];
-          if (s.metaInfo && s.metaInfo().is_price_study === false && (s.ordersData || s.reportData)) { strat = s; break; }
-        }
+        ${FIND_STRATEGY}
         if (!strat) return {trades: [], source: 'internal_api', error: 'No strategy found on chart.'};
+        if (rd && Array.isArray(rd.trades)) {
+          // 지금 트레이딩뷰: reportData().trades = [{e:진입{c 이름,p 값,tm 시각ms}, x:청산{…}, q 수량, tp:{v 손익,p 비율}, cm 수수료, rn 최대 상승, dd 최대 하락}]
+          var iso = function(ms) { try { return new Date(ms).toISOString(); } catch (e) { return null; } };
+          var out = [];
+          for (var t0 = 0; t0 < Math.min(rd.trades.length, ${limit}); t0++) {
+            var tr = rd.trades[t0] || {}, e = tr.e || {}, x = tr.x || {};
+            out.push({entry_name: e.c, entry_price: e.p, entry_time: iso(e.tm), exit_name: x.c, exit_price: x.p, exit_time: x.tm ? iso(x.tm) : null,
+                      qty: tr.q, profit: tr.tp && tr.tp.v, profit_pct: tr.tp && tr.tp.p, commission: tr.cm,
+                      run_up: tr.rn && tr.rn.v, drawdown: tr.dd && tr.dd.v});
+          }
+          return {trades: out, total_trades: rd.trades.length, source: 'internal_api'};
+        }
         var orders = null;
         if (strat.ordersData) { orders = typeof strat.ordersData === 'function' ? strat.ordersData() : strat.ordersData; if (orders && typeof orders.value === 'function') orders = orders.value(); }
         if (!orders || !Array.isArray(orders)) {
@@ -198,7 +233,7 @@ export async function getTrades({ max_trades } = {}) {
       } catch(e) { return {trades: [], source: 'internal_api', error: e.message}; }
     })()
   `);
-  return { success: true, trade_count: trades?.trades?.length || 0, source: trades?.source, trades: trades?.trades || [], error: trades?.error };
+  return { success: true, trade_count: trades?.trades?.length || 0, total_trades: trades?.total_trades, source: trades?.source, trades: trades?.trades || [], error: trades?.error };
 }
 
 export async function getEquity() {
@@ -207,13 +242,20 @@ export async function getEquity() {
       try {
         var chart = ${CHART_API}._chartWidget;
         var sources = chart.model().model().dataSources();
-        var strat = null;
-        for (var i = 0; i < sources.length; i++) {
-          var s = sources[i];
-          if (s.metaInfo && s.metaInfo().is_price_study === false && (s.reportData || s.performance)) { strat = s; break; }
-        }
+        ${FIND_STRATEGY}
         if (!strat) return {data: [], source: 'internal_api', error: 'No strategy found on chart.'};
         var data = [];
+        if (rd && Array.isArray(rd.trades) && rd.trades.length) {
+          // 곡선 배열은 API 에 없다 → 거래가 끝날 때마다 누적 손익(청산 기준). 열린 거래는 넣지 않는다.
+          var cum = 0;
+          for (var q = 0; q < rd.trades.length; q++) {
+            var tq = rd.trades[q] || {};
+            if (!tq.x || !tq.x.tm || !tq.tp || typeof tq.tp.v !== 'number') continue;   // 숫자 아닌 손익이 끼면 누적이 NaN 이 된다(DeepSeek 10-27)
+            cum += tq.tp.v;
+            data.push({time: new Date(tq.x.tm).toISOString(), cum_profit: cum});
+          }
+          return {data: data, source: 'internal_api', note: '거래 청산 시점마다 누적 손익(봉마다의 평가 곡선 아님)'};
+        }
         if (strat.equityData) {
           var eq = typeof strat.equityData === 'function' ? strat.equityData() : strat.equityData;
           if (eq && typeof eq.value === 'function') eq = eq.value();
